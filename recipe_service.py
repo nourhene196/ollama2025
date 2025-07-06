@@ -1,226 +1,189 @@
+#!/usr/bin/env python3
 """
-Service de génération de recettes
+Service de génération de recettes avec llama3.2:1b
 """
 
-from typing import List, Optional, Dict, Any
-from models import Recipe, DataManager
-from ollama_client import OllamaClient, RecipeGenerator
 import re
+from typing import List, Dict, Any, Optional
+from models import Recipe
+from ollama_service import OllamaService
+from config import Config
 
 class RecipeService:
-    """Service principal pour la génération de recettes"""
+    """Service pour la génération de recettes avec IA uniquement"""
     
-    def __init__(self, data_manager: DataManager, ollama_client: OllamaClient):
-        self.data_manager = data_manager
-        self.ollama_client = ollama_client
-        self.recipe_generator = RecipeGenerator(ollama_client)
+    def __init__(self, ollama_service: OllamaService, config: Config):
+        self.ollama_service = ollama_service
+        self.config = config
+    
+    def generate_recipe(self, ingredients: List[str], cuisine_type: str = "", 
+                       difficulty: str = "", prep_time: str = "") -> Optional[Recipe]:
+        """Génère une recette avec llama3.2:1b - OBLIGATOIRE"""
+        if not ingredients:
+            raise ValueError("❌ Aucun ingrédient sélectionné")
         
-    def generate_recipe(self, selected_ingredients: List[str], 
-                       cuisine_type: str = "", difficulty: str = "", 
-                       prep_time: str = "") -> Optional[Recipe]:
-        """Génère une recette complète"""
+        # Vérifier que llama3.2:1b est disponible
+        if not self.ollama_service.is_available():
+            raise ConnectionError("❌ Ollama n'est pas disponible. Démarrez Ollama avec: ollama serve")
         
-        if not selected_ingredients:
-            return None
+        if not self.ollama_service.is_model_available():
+            raise ConnectionError("❌ llama3.2:1b n'est pas disponible. Installez avec: ollama pull llama3.2:1b")
         
-        # Vérifier la disponibilité d'Ollama
-        if not self.ollama_client.is_available():
-            return self._generate_fallback_recipe(selected_ingredients)
-        
-        # Générer la recette avec TinyLlama
-        raw_response = self.recipe_generator.generate_recipe(
-            selected_ingredients, cuisine_type, difficulty, prep_time
+        # Créer le prompt
+        ingredient_list = "\n".join([f"- {ing}" for ing in ingredients])
+        prompt = self.config.PROMPTS['recipe_prompt'].format(
+            ingredients=", ".join(ingredients),
+            ingredient_list=ingredient_list
         )
         
-        if not raw_response:
-            return self._generate_fallback_recipe(selected_ingredients)
+        # Ajouter les options
+        if cuisine_type:
+            prompt += f"\nStyle de cuisine: {cuisine_type}"
+        if difficulty:
+            prompt += f"\nDifficulté souhaitée: {difficulty}"
+        if prep_time:
+            prompt += f"\nTemps maximum: {prep_time}"
+        
+        # Générer avec llama3.2:1b
+        print(f"🤖 Génération avec llama3.2:1b...")
+        response = self.ollama_service.generate_text(
+            prompt, 
+            self.config.PROMPTS['recipe_system']
+        )
+        
+        if not response:
+            raise RuntimeError("❌ llama3.2:1b n'a pas pu générer de réponse")
         
         # Parser la réponse
-        parsed_recipe = self.recipe_generator.parse_recipe_response(raw_response)
+        recipe = self._parse_recipe_response(response, ingredients)
         
-        if not parsed_recipe:
-            return self._generate_fallback_recipe(selected_ingredients)
-        
-        # Créer l'objet Recipe
-        recipe = self._create_recipe_object(parsed_recipe, selected_ingredients)
-        
-        # Calculer les calories
-        recipe.calculate_total_calories(self.data_manager.ingredients_db)
+        if not recipe:
+            raise RuntimeError("❌ Impossible de parser la réponse de llama3.2:1b")
         
         return recipe
     
-    def _create_recipe_object(self, parsed_data: Dict[str, Any], 
-                            selected_ingredients: List[str]) -> Recipe:
-        """Crée un objet Recipe à partir des données parsées"""
-        
-        # Traiter les ingrédients
-        ingredients_list = []
-        for ingredient_text in parsed_data.get('ingredients', []):
-            parsed_ingredient = self._parse_ingredient_line(ingredient_text)
-            if parsed_ingredient:
-                ingredients_list.append(parsed_ingredient)
-        
-        # Si pas d'ingrédients parsés, utiliser les ingrédients sélectionnés
-        if not ingredients_list:
-            ingredients_list = [
-                {"name": ing, "quantity": 1, "unit": "portion"} 
-                for ing in selected_ingredients
-            ]
-        
-        return Recipe(
-            title=parsed_data.get('title', 'Recette délicieuse'),
-            ingredients=ingredients_list,
-            steps=parsed_data.get('steps', ['Préparer les ingrédients']),
-            prep_time=parsed_data.get('prep_time', '30 minutes'),
-            difficulty=parsed_data.get('difficulty', 'Facile'),
-            total_calories=0.0
-        )
+    def _parse_recipe_response(self, response: str, ingredients: List[str]) -> Optional[Recipe]:
+        """Parse la réponse de llama3.2:1b pour extraire la recette"""
+        try:
+            lines = response.strip().split('\n')
+            recipe_data = {
+                'title': '',
+                'ingredients': [],
+                'steps': [],
+                'prep_time': '30 minutes',
+                'difficulty': 'Moyen',
+                'tips': ''
+            }
+            
+            current_section = None
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Identifier les sections
+                line_upper = line.upper()
+                if line_upper.startswith('TITRE:'):
+                    recipe_data['title'] = line[6:].strip()
+                elif line_upper.startswith('INGRÉDIENTS:') or line_upper.startswith('INGREDIENTS:'):
+                    current_section = 'ingredients'
+                elif line_upper.startswith('PRÉPARATION:') or line_upper.startswith('PREPARATION:'):
+                    current_section = 'steps'
+                elif line_upper.startswith('TEMPS:'):
+                    recipe_data['prep_time'] = line[6:].strip()
+                elif line_upper.startswith('DIFFICULTÉ:') or line_upper.startswith('DIFFICULTE:'):
+                    recipe_data['difficulty'] = line.split(':', 1)[1].strip()
+                elif line_upper.startswith('CONSEILS:'):
+                    recipe_data['tips'] = line[9:].strip()
+                elif current_section == 'ingredients' and (line.startswith('-') or line.startswith('•')):
+                    ing_text = line[1:].strip()
+                    parsed_ing = self._parse_ingredient_line(ing_text)
+                    if parsed_ing:
+                        recipe_data['ingredients'].append(parsed_ing)
+                elif current_section == 'steps' and (line[0].isdigit() or line.startswith('-')):
+                    step = re.sub(r'^\d+\.?\s*', '', line)
+                    step = re.sub(r'^-\s*', '', step)
+                    if step:
+                        recipe_data['steps'].append(step.strip())
+            
+            # Validation et fallbacks
+            if not recipe_data['title']:
+                recipe_data['title'] = f"Délicieux plat aux {', '.join(ingredients[:3])}"
+            
+            if not recipe_data['ingredients']:
+                recipe_data['ingredients'] = [
+                    {"name": ing, "quantity": 200, "unit": "g"} 
+                    for ing in ingredients
+                ]
+            
+            if not recipe_data['steps']:
+                recipe_data['steps'] = [
+                    "Préparer tous les ingrédients",
+                    "Suivre les techniques culinaires appropriées",
+                    "Assaisonner selon le goût",
+                    "Servir chaud"
+                ]
+            
+            return Recipe(
+                title=recipe_data['title'],
+                ingredients=recipe_data['ingredients'],
+                steps=recipe_data['steps'],
+                prep_time=recipe_data['prep_time'],
+                difficulty=recipe_data['difficulty'],
+                tips=recipe_data['tips']
+            )
+            
+        except Exception as e:
+            print(f"Erreur parsing recette: {e}")
+            return None
     
     def _parse_ingredient_line(self, ingredient_text: str) -> Optional[Dict[str, Any]]:
-        """Parse une ligne d'ingrédient du format 'nom : quantité unité'"""
+        """Parse une ligne d'ingrédient"""
         try:
             # Nettoyer le texte
             ingredient_text = ingredient_text.strip()
             
             # Patterns pour extraire quantité et unité
             patterns = [
-                r'([^:]+):\s*(\d+(?:\.\d+)?)\s*([a-zA-Zàâäéèêëïîôöùûüÿç]*)',
-                r'([^:]+):\s*(\d+(?:\.\d+)?)',
-                r'([^-]+)-\s*(\d+(?:\.\d+)?)\s*([a-zA-Zàâäéèêëïîôöùûüÿç]*)',
+                r'([^:]+):\s*(\d+(?:\.\d+)?)\s*([a-zA-Zàâäéèêëïîôöùûüÿç]*)',  # nom: quantité unité
+                r'(\d+(?:\.\d+)?)\s*([a-zA-Zàâäéèêëïîôöùûüÿç]+)\s+(.+)',      # quantité unité nom
+                r'([^-]+)-\s*(\d+(?:\.\d+)?)\s*([a-zA-Zàâäéèêëïîôöùûüÿç]*)',  # nom - quantité unité
             ]
             
             for pattern in patterns:
-                match = re.match(pattern, ingredient_text, re.IGNORECASE)
+                match = re.search(pattern, ingredient_text, re.IGNORECASE)
                 if match:
-                    name = match.group(1).strip()
-                    quantity = float(match.group(2))
-                    unit = match.group(3).strip() if len(match.groups()) > 2 else "g"
-                    
-                    return {
-                        "name": name,
-                        "quantity": quantity,
-                        "unit": unit if unit else "g"
-                    }
+                    if len(match.groups()) == 3:
+                        # Déterminer l'ordre: nom/quantité/unité
+                        if match.group(1).replace('.', '').replace(',', '').isdigit():
+                            # Pattern: quantité unité nom
+                            quantity = float(match.group(1).replace(',', '.'))
+                            unit = match.group(2).strip()
+                            name = match.group(3).strip()
+                        else:
+                            # Pattern: nom : quantité unité
+                            name = match.group(1).strip()
+                            quantity = float(match.group(2).replace(',', '.'))
+                            unit = match.group(3).strip() if match.group(3) else "g"
+                        
+                        return {
+                            "name": name,
+                            "quantity": quantity,
+                            "unit": unit if unit else "g"
+                        }
             
-            # Si aucun pattern ne fonctionne, retourner l'ingrédient avec quantité par défaut
+            # Fallback: juste le nom
             return {
-                "name": ingredient_text,
-                "quantity": 1,
-                "unit": "portion"
+                "name": ingredient_text.strip(),
+                "quantity": 200,
+                "unit": "g"
             }
             
         except Exception as e:
-            print(f"Erreur lors du parsing de l'ingrédient '{ingredient_text}': {e}")
-            return None
-    
-    def _generate_fallback_recipe(self, selected_ingredients: List[str]) -> Recipe:
-        """Génère une recette de base si Ollama n'est pas disponible"""
-        
-        # Recettes prédéfinies selon les ingrédients
-        fallback_recipes = self._get_fallback_recipes()
-        
-        # Chercher une recette qui correspond aux ingrédients
-        best_match = None
-        max_matches = 0
-        
-        for recipe_template in fallback_recipes:
-            matches = sum(1 for ing in selected_ingredients 
-                         if ing.lower() in recipe_template['ingredients_needed'])
-            if matches > max_matches:
-                max_matches = matches
-                best_match = recipe_template
-        
-        if best_match:
-            # Adapter la recette aux ingrédients sélectionnés
-            ingredients_list = []
-            for ing in selected_ingredients:
-                ingredients_list.append({
-                    "name": ing,
-                    "quantity": 1,
-                    "unit": "portion"
-                })
-            
-            recipe = Recipe(
-                title=best_match['title'],
-                ingredients=ingredients_list,
-                steps=best_match['steps'],
-                prep_time=best_match['prep_time'],
-                difficulty=best_match['difficulty']
-            )
-            
-            # Calculer les calories
-            recipe.calculate_total_calories(self.data_manager.ingredients_db)
-            return recipe
-        
-        # Recette générique
-        return Recipe(
-            title=f"Plat aux {', '.join(selected_ingredients[:3])}",
-            ingredients=[{"name": ing, "quantity": 1, "unit": "portion"} 
-                        for ing in selected_ingredients],
-            steps=[
-                "Préparer et nettoyer tous les ingrédients",
-                "Faire revenir les ingrédients dans une poêle",
-                "Assaisonner selon votre goût",
-                "Cuire jusqu'à ce que ce soit tendre",
-                "Servir chaud"
-            ],
-            prep_time="30 minutes",
-            difficulty="Facile"
-        )
-    
-    def _get_fallback_recipes(self) -> List[Dict[str, Any]]:
-        """Retourne des recettes prédéfinies"""
-        return [
-            {
-                'title': 'Sauté de légumes',
-                'ingredients_needed': ['carotte', 'oignon', 'tomate', 'courgette'],
-                'steps': [
-                    'Couper tous les légumes en dés',
-                    'Faire chauffer l\'huile dans une poêle',
-                    'Faire revenir l\'oignon jusqu\'à transparence',
-                    'Ajouter les autres légumes et cuire 15 minutes',
-                    'Assaisonner et servir'
-                ],
-                'prep_time': '25 minutes',
-                'difficulty': 'Facile'
-            },
-            {
-                'title': 'Omelette aux légumes',
-                'ingredients_needed': ['œuf', 'tomate', 'oignon', 'fromage'],
-                'steps': [
-                    'Battre les œufs dans un bol',
-                    'Faire revenir les légumes dans une poêle',
-                    'Verser les œufs battus sur les légumes',
-                    'Ajouter le fromage et plier l\'omelette',
-                    'Servir immédiatement'
-                ],
-                'prep_time': '15 minutes',
-                'difficulty': 'Facile'
-            },
-            {
-                'title': 'Riz sauté',
-                'ingredients_needed': ['riz', 'œuf', 'carotte', 'oignon'],
-                'steps': [
-                    'Cuire le riz à l\'eau bouillante',
-                    'Faire revenir les légumes dans une poêle',
-                    'Ajouter le riz cuit et mélanger',
-                    'Incorporer les œufs battus',
-                    'Cuire en remuant jusqu\'à ce que les œufs soient pris'
-                ],
-                'prep_time': '30 minutes',
-                'difficulty': 'Moyen'
-            },
-            {
-                'title': 'Salade complète',
-                'ingredients_needed': ['tomate', 'carotte', 'œuf', 'fromage'],
-                'steps': [
-                    'Laver et couper les légumes',
-                    'Cuire les œufs durs',
-                    'Disposer tous les ingrédients dans un saladier',
-                    'Assaisonner avec huile et vinaigre',
-                    'Mélanger et servir frais'
-                ],
-                'prep_time': '20 minutes',
-                'difficulty': 'Facile'
+            print(f"Erreur parsing ingrédient '{ingredient_text}': {e}")
+            return {
+                "name": ingredient_text.strip(),
+                "quantity": 200,
+                "unit": "g"
             }
-        ]

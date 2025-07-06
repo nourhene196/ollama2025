@@ -1,9 +1,10 @@
+#!/usr/bin/env python3
 """
 Modèles de données pour l'application
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Dict
+from typing import List, Dict, Any, Optional
 import pandas as pd
 import os
 
@@ -17,49 +18,42 @@ class Ingredient:
     fats: float = 0.0
     fiber: float = 0.0
     category: str = "Autre"
-    
-    def calculate_calories(self, quantity_g: float) -> float:
-        """Calcule les calories pour une quantité donnée"""
-        return (self.calories_per_100g * quantity_g) / 100
 
 @dataclass
 class Recipe:
     """Modèle pour une recette"""
     title: str
-    ingredients: List[Dict[str, any]]  # [{"name": str, "quantity": float, "unit": str}]
+    ingredients: List[Dict[str, any]]
     steps: List[str]
     prep_time: str
     difficulty: str
+    tips: str = ""
     total_calories: float = 0.0
-    
-    def calculate_total_calories(self, ingredients_db: Dict[str, Ingredient]) -> float:
-        """Calcule le total des calories de la recette"""
-        total = 0.0
-        for ingredient in self.ingredients:
-            name = ingredient.get('name', '').lower()
-            quantity = ingredient.get('quantity', 0)
-            
-            if name in ingredients_db:
-                # Conversion approximative en grammes (à ajuster selon l'unité)
-                quantity_g = self._convert_to_grams(quantity, ingredient.get('unit', 'g'))
-                total += ingredients_db[name].calculate_calories(quantity_g)
-        
-        self.total_calories = total
-        return total
-    
-    def _convert_to_grams(self, quantity: float, unit: str) -> float:
-        """Convertit une quantité en grammes (approximations)"""
-        conversions = {
-            'g': 1.0,
-            'kg': 1000.0,
-            'ml': 1.0,  # Approximation pour les liquides
-            'l': 1000.0,
-            'tasse': 240.0,
-            'cuillère': 15.0,
-            'pincée': 2.0,
-            'unité': 100.0  # Approximation moyenne
-        }
-        return quantity * conversions.get(unit.lower(), 1.0)
+    total_proteins: float = 0.0
+    total_carbs: float = 0.0
+    total_fats: float = 0.0
+
+@dataclass
+class NutritionAnalysis:
+    """Analyse nutritionnelle"""
+    total_calories: float
+    total_proteins: float
+    total_carbs: float
+    total_fats: float
+    health_tips: str = ""
+
+@dataclass
+class CalorieCalculation:
+    """Résultat d'un calcul de calories"""
+    ingredient_name: str
+    quantity: float
+    unit: str
+    calories_per_100g: float
+    total_calories: float
+    proteins: float
+    carbs: float
+    fats: float
+    fiber: float
 
 class DataManager:
     """Gestionnaire des données nutritionnelles"""
@@ -72,46 +66,36 @@ class DataManager:
     def load_data(self):
         """Charge les données depuis les fichiers CSV"""
         try:
-            # Charger le fichier de calories principal
             if os.path.exists(self.config.CALORIES_CSV):
                 df = pd.read_csv(self.config.CALORIES_CSV)
-                self._process_calories_data(df)
+                self._process_data(df)
             else:
                 self._create_sample_data()
         except Exception as e:
-            print(f"Erreur lors du chargement des données: {e}")
+            print(f"Erreur chargement données: {e}")
             self._create_sample_data()
     
-    def _process_calories_data(self, df: pd.DataFrame):
-        """Traite les données du fichier CSV Kaggle"""
-        # Adaptation selon la structure du dataset Kaggle
-        # Colonnes communes: name, calories, protein, carbs, fat, fiber, category
-        
+    def _process_data(self, df: pd.DataFrame):
+        """Traite les données du fichier CSV"""
         for _, row in df.iterrows():
             try:
-                name = str(row.get('name', row.get('food', ''))).lower().strip()
-                calories = float(row.get('calories', row.get('energy', 0)))
-                proteins = float(row.get('protein', row.get('proteins', 0)))
-                carbs = float(row.get('carbs', row.get('carbohydrates', 0)))
-                fats = float(row.get('fat', row.get('fats', 0)))
-                fiber = float(row.get('fiber', 0))
-                category = str(row.get('category', row.get('food_group', 'Autre')))
-                
+                name = str(row.get('name', '')).lower().strip()
+                calories = float(row.get('calories', 0))
                 if name and calories > 0:
                     self.ingredients_db[name] = Ingredient(
                         name=name,
                         calories_per_100g=calories,
-                        proteins=proteins,
-                        carbs=carbs,
-                        fats=fats,
-                        fiber=fiber,
-                        category=category
+                        proteins=float(row.get('protein', 0)),
+                        carbs=float(row.get('carbs', 0)),
+                        fats=float(row.get('fat', 0)),
+                        fiber=float(row.get('fiber', 0)),
+                        category=str(row.get('category', 'Autre'))
                     )
-            except (ValueError, KeyError) as e:
+            except (ValueError, KeyError):
                 continue
     
     def _create_sample_data(self):
-        """Crée des données d'exemple si aucun fichier n'est trouvé"""
+        """Crée des données d'exemple"""
         sample_ingredients = [
             ("tomate", 18, 0.9, 3.9, 0.2, 1.2, "Légume"),
             ("poulet", 239, 27.3, 0, 13.6, 0, "Viande"),
@@ -132,11 +116,16 @@ class DataManager:
             ("pomme", 52, 0.3, 13.8, 0.2, 2.4, "Fruit"),
             ("épinard", 23, 2.9, 3.6, 0.4, 2.2, "Légume"),
             ("champignon", 22, 3.1, 3.3, 0.3, 1.0, "Légume"),
-            ("ail", 149, 6.4, 33.1, 0.5, 2.1, "Aromate")
+            ("ail", 149, 6.4, 33.1, 0.5, 2.1, "Aromate"),
+            ("thym", 276, 9.1, 63.9, 7.4, 37.0, "Aromate"),
+            ("basilic", 251, 14.4, 47.8, 4.1, 61.0, "Aromate"),
+            ("persil", 292, 26.6, 50.6, 5.5, 26.7, "Aromate"),
+            ("courgette", 17, 1.2, 3.1, 0.3, 1.0, "Légume"),
+            ("aubergine", 25, 1.0, 5.9, 0.2, 3.0, "Légume")
         ]
         
         for name, calories, proteins, carbs, fats, fiber, category in sample_ingredients:
-            self.ingredients_db[name] = Ingredient(
+            self.ingredients_db[name.lower()] = Ingredient(
                 name=name,
                 calories_per_100g=calories,
                 proteins=proteins,

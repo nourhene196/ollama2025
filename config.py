@@ -1,7 +1,7 @@
+#!/usr/bin/env python3
 """
 Configuration de l'application
 """
-
 import os
 
 class Config:
@@ -9,68 +9,69 @@ class Config:
     
     # Configuration Ollama
     OLLAMA_BASE_URL = "http://localhost:11434"
-    OLLAMA_MODEL = "tinyllama"
+    OLLAMA_MODEL = "llama3.2:1b"  # Modèle compact spécialisé
     
     # Configuration de l'application
-    APP_TITLE = "Assistant Culinaire & Calories"
-    APP_VERSION = "1.0.0"
-    APP_GEOMETRY = "1200x800"
+    APP_TITLE = "🍽️ Assistant Culinaire & Calories IA"
+    APP_VERSION = "3.0.0"
+    APP_GEOMETRY = "1600x1000"
     
     # Chemins des fichiers
     DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
     CALORIES_CSV = os.path.join(DATA_DIR, "calories.csv")
-    INGREDIENTS_CSV = os.path.join(DATA_DIR, "ingredients.csv")
     
     # Configuration des couleurs
     COLORS = {
-        'primary': '#2E86AB',
-        'secondary': '#A23B72',
-        'success': '#F18F01',
-        'background': '#F8F9FA',
-        'text': '#212529',
-        'accent': '#E9ECEF'
+        'primary': '#FF6B35',      # Orange vif
+        'secondary': '#004E98',    # Bleu foncé
+        'success': '#2ECC71',      # Vert
+        'background': '#F8F9FA',   # Gris clair
+        'card': '#FFFFFF',         # Blanc
+        'accent': '#FFE066',       # Jaune
+        'text': '#2C3E50'          # Gris foncé
     }
     
     # Configuration des polices
     FONTS = {
-        'default': ('Arial', 10),
-        'heading': ('Arial', 14, 'bold'),
-        'title': ('Arial', 18, 'bold'),
-        'small': ('Arial', 8)
+        'title': ('Segoe UI', 20, 'bold'),
+        'heading': ('Segoe UI', 14, 'bold'),
+        'default': ('Segoe UI', 11),
+        'small': ('Segoe UI', 9),
+        'button': ('Segoe UI', 12, 'bold')
     }
     
-    # Messages système
-    MESSAGES = {
-        'error_ollama': "Erreur de connexion à Ollama. Vérifiez que le service est démarré.",
-        'error_model': "Modèle TinyLlama non trouvé. Vérifiez l'installation.",
-        'error_data': "Erreur lors du chargement des données.",
-        'success_recipe': "Recette générée avec succès !",
-        'success_calories': "Calcul des calories terminé !",
-        'no_ingredients': "Veuillez sélectionner au moins un ingrédient.",
-        'loading': "Chargement en cours..."
-    }
-    
-    # Prompts pour TinyLlama
+    # Prompts optimisés pour llama3.2:1b
     PROMPTS = {
-        'recipe_system': """Tu es un chef cuisinier expert. Génère une recette simple et délicieuse 
-        avec les ingrédients fournis. Donne un titre, les ingrédients avec quantités, 
-        et les étapes de préparation. Reste concis et pratique.""",
+        'recipe_system': """Tu es un chef cuisinier français expert. Réponds UNIQUEMENT en français.
+        Format obligatoire: TITRE, INGRÉDIENTS, PRÉPARATION, TEMPS, DIFFICULTÉ, CONSEILS.""",
         
-        'recipe_template': """Crée une recette avec ces ingrédients: {ingredients}
+        'calories_system': """Tu es un nutritionniste expert. Analyse précisément en français.
+        Format: CALORIES_TOTALES, PROTEINES, GLUCIDES, LIPIDES, CONSEILS_NUTRITION.""",
         
-        Format de réponse:
-        TITRE: [nom de la recette]
+        'recipe_prompt': """Crée une recette française avec: {ingredients}
+
+TITRE: [nom de recette créatif]
+
+INGRÉDIENTS:
+{ingredient_list}
+
+PRÉPARATION:
+1. [étape détaillée et claire]
+2. [étape suivante]
+3. [étape finale]
+
+TEMPS: [X minutes]
+DIFFICULTÉ: [Facile/Moyen/Difficile]
+CONSEILS: [astuce du chef]""",
         
-        INGRÉDIENTS:
-        - [ingrédient 1] : [quantité]
-        - [ingrédient 2] : [quantité]
-        
-        PRÉPARATION:
-        1. [étape 1]
-        2. [étape 2]
-        
-        TEMPS: [temps de préparation]
-        DIFFICULTÉ: [facile/moyen/difficile]"""
+        'nutrition_prompt': """Analyse nutritionnelle pour: {dish_name}
+Ingrédients: {ingredients}
+
+CALORIES_TOTALES: [nombre précis] kcal
+PROTEINES: [nombre] g
+GLUCIDES: [nombre] g
+LIPIDES: [nombre] g
+CONSEILS_NUTRITION: [conseil santé français court et utile]"""
     }
     
     @classmethod

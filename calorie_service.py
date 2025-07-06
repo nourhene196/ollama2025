@@ -1,82 +1,88 @@
+#!/usr/bin/env python3
 """
-Service de calcul de calories
+Service de calcul de calories avec llama3.2:1b
 """
 
-from typing import List, Dict, Any, Optional, Tuple
-from models import Ingredient, DataManager
-from dataclasses import dataclass
-import math
-
-@dataclass
-class CalorieCalculation:
-    """Résultat d'un calcul de calories"""
-    ingredient_name: str
-    quantity: float
-    unit: str
-    calories_per_100g: float
-    total_calories: float
-    proteins: float
-    carbs: float
-    fats: float
-    fiber: float
-
-@dataclass
-class MealAnalysis:
-    """Analyse nutritionnelle d'un repas"""
-    calculations: List[CalorieCalculation]
-    total_calories: float
-    total_proteins: float
-    total_carbs: float
-    total_fats: float
-    total_fiber: float
-    
-    def get_macros_percentage(self) -> Dict[str, float]:
-        """Calcule les pourcentages de macronutriments"""
-        total_macros = self.total_proteins + self.total_carbs + self.total_fats
-        if total_macros == 0:
-            return {"proteins": 0, "carbs": 0, "fats": 0}
-        
-        return {
-            "proteins": round((self.total_proteins / total_macros) * 100, 1),
-            "carbs": round((self.total_carbs / total_macros) * 100, 1),
-            "fats": round((self.total_fats / total_macros) * 100, 1)
-        }
+import re
+from typing import List, Dict, Any, Optional
+from models import NutritionAnalysis, CalorieCalculation, Recipe, DataManager
+from ollama_service import OllamaService
+from config import Config
 
 class CalorieService:
-    """Service principal pour le calcul des calories"""
+    """Service pour le calcul de calories avec IA uniquement"""
     
-    def __init__(self, data_manager: DataManager):
+    def __init__(self, ollama_service: OllamaService, data_manager: DataManager, config: Config):
+        self.ollama_service = ollama_service
         self.data_manager = data_manager
+        self.config = config
         
-        # Facteurs de conversion approximatifs
+        # Facteurs de conversion
         self.conversion_factors = {
-            'g': 1.0,
-            'kg': 1000.0,
-            'ml': 1.0,  # Pour les liquides, approximation 1ml = 1g
-            'l': 1000.0,
-            'litre': 1000.0,
-            'tasse': 240.0,
-            'cuillère': 15.0,
-            'c. à soupe': 15.0,
-            'c. à café': 5.0,
-            'cuillère à soupe': 15.0,
-            'cuillère à café': 5.0,
-            'pincée': 2.0,
-            'poignée': 50.0,
-            'tranche': 30.0,
-            'unité': 100.0,
-            'pièce': 100.0,
-            'portion': 150.0
+            'g': 1.0, 'kg': 1000.0, 'ml': 1.0, 'l': 1000.0,
+            'tasse': 240.0, 'cuillère': 15.0, 'c. à soupe': 15.0,
+            'c. à café': 5.0, 'pincée': 2.0, 'portion': 150.0,
+            'unité': 100.0, 'pièce': 100.0, 'gousse': 5.0,
+            'tranche': 30.0, 'poignée': 50.0
         }
     
-    def calculate_calories(self, ingredients_data: List[Dict[str, Any]]) -> MealAnalysis:
-        """
-        Calcule les calories pour une liste d'ingrédients
-        Format: [{"name": str, "quantity": float, "unit": str}]
-        """
+    def analyze_nutrition_with_ai(self, recipe: Recipe) -> Optional[NutritionAnalysis]:
+        """Analyse nutritionnelle avec llama3.2:1b - OBLIGATOIRE"""
+        # Vérifier que llama3.2:1b est disponible
+        if not self.ollama_service.is_available():
+            raise ConnectionError("❌ Ollama n'est pas disponible. Démarrez Ollama avec: ollama serve")
+        
+        if not self.ollama_service.is_model_available():
+            raise ConnectionError("❌ llama3.2:1b n'est pas disponible. Installez avec: ollama pull llama3.2:1b")
+        
+        # Créer le prompt pour l'analyse nutritionnelle
+        ingredients_str = ", ".join([f"{ing['name']} ({ing['quantity']} {ing['unit']})" 
+                                   for ing in recipe.ingredients])
+        
+        prompt = self.config.PROMPTS['nutrition_prompt'].format(
+            dish_name=recipe.title,
+            ingredients=ingredients_str
+        )
+        
+        # Générer l'analyse avec llama3.2:1b
+        print(f"🤖 Analyse nutritionnelle avec llama3.2:1b...")
+        response = self.ollama_service.generate_text(
+            prompt,
+            self.config.PROMPTS['calories_system']
+        )
+        
+        if not response:
+            raise RuntimeError("❌ llama3.2:1b n'a pas pu générer d'analyse nutritionnelle")
+        
+        # Parser la réponse
+        analysis = self._parse_nutrition_response(response)
+        
+        if not analysis:
+            # Si le parsing échoue, faire un calcul basique + IA pour les conseils
+            basic_analysis = self._calculate_basic_nutrition(recipe)
+            
+            # Demander juste des conseils à l'IA
+            advice_prompt = f"Donne des conseils santé courts pour ce plat: {recipe.title} ({basic_analysis.total_calories:.0f} kcal, {basic_analysis.total_proteins:.0f}g protéines)"
+            advice = self.ollama_service.generate_text(advice_prompt, "Tu es nutritionniste. Réponds en 1-2 phrases.")
+            
+            return NutritionAnalysis(
+                total_calories=basic_analysis.total_calories,
+                total_proteins=basic_analysis.total_proteins,
+                total_carbs=basic_analysis.total_carbs,
+                total_fats=basic_analysis.total_fats,
+                health_tips=advice or "Plat équilibré, à consommer avec modération."
+            )
+        
+        return analysis
+    
+    def calculate_meal_calories(self, foods_data: List[Dict[str, Any]]) -> List[CalorieCalculation]:
+        """Calcule les calories pour une liste d'aliments - avec IA pour conseils"""
+        if not foods_data:
+            raise ValueError("❌ Aucun aliment à analyser")
+        
         calculations = []
         
-        for item in ingredients_data:
+        for item in foods_data:
             calc = self._calculate_single_ingredient(
                 item.get('name', ''),
                 item.get('quantity', 0),
@@ -85,25 +91,26 @@ class CalorieService:
             if calc:
                 calculations.append(calc)
         
-        # Calculer les totaux
-        total_calories = sum(calc.total_calories for calc in calculations)
-        total_proteins = sum(calc.proteins for calc in calculations)
-        total_carbs = sum(calc.carbs for calc in calculations)
-        total_fats = sum(calc.fats for calc in calculations)
-        total_fiber = sum(calc.fiber for calc in calculations)
+        # Si llama3.2:1b est disponible, ajouter des conseils IA
+        if calculations and self.ollama_service.is_available() and self.ollama_service.is_model_available():
+            total_calories = sum(calc.total_calories for calc in calculations)
+            foods_list = ", ".join([calc.ingredient_name for calc in calculations])
+            
+            advice_prompt = f"Conseils nutritionnels courts pour ce repas: {foods_list} (Total: {total_calories:.0f} kcal)"
+            advice = self.ollama_service.generate_text(
+                advice_prompt, 
+                "Tu es nutritionniste. Donne 1-2 conseils courts en français."
+            )
+            
+            # Stocker les conseils pour utilisation ultérieure
+            if advice and calculations:
+                # Les conseils seront utilisés dans l'interface
+                pass
         
-        return MealAnalysis(
-            calculations=calculations,
-            total_calories=round(total_calories, 1),
-            total_proteins=round(total_proteins, 1),
-            total_carbs=round(total_carbs, 1),
-            total_fats=round(total_fats, 1),
-            total_fiber=round(total_fiber, 1)
-        )
+        return calculations
     
     def _calculate_single_ingredient(self, name: str, quantity: float, unit: str) -> Optional[CalorieCalculation]:
         """Calcule les calories pour un seul ingrédient"""
-        
         # Chercher l'ingrédient dans la base de données
         ingredient = self.data_manager.get_ingredient(name)
         if not ingredient:
@@ -145,141 +152,86 @@ class CalorieService:
         # Si l'unité n'est pas trouvée, considérer comme grammes
         return quantity
     
-    def get_daily_needs_comparison(self, analysis: MealAnalysis, 
-                                 age: int = 30, gender: str = "M", 
-                                 activity_level: str = "modéré") -> Dict[str, Any]:
-        """Compare les apports avec les besoins quotidiens recommandés"""
-        
-        # Besoins caloriques de base (approximatifs)
-        base_needs = self._calculate_daily_needs(age, gender, activity_level)
-        
-        return {
-            'recommended_calories': base_needs['calories'],
-            'current_calories': analysis.total_calories,
-            'percentage_of_needs': round((analysis.total_calories / base_needs['calories']) * 100, 1),
-            'remaining_calories': base_needs['calories'] - analysis.total_calories,
-            'macros_comparison': {
-                'proteins': {
-                    'recommended': base_needs['proteins'],
-                    'current': analysis.total_proteins,
-                    'percentage': round((analysis.total_proteins / base_needs['proteins']) * 100, 1)
-                },
-                'carbs': {
-                    'recommended': base_needs['carbs'],
-                    'current': analysis.total_carbs,
-                    'percentage': round((analysis.total_carbs / base_needs['carbs']) * 100, 1)
-                },
-                'fats': {
-                    'recommended': base_needs['fats'],
-                    'current': analysis.total_fats,
-                    'percentage': round((analysis.total_fats / base_needs['fats']) * 100, 1)
-                }
+    def _parse_nutrition_response(self, response: str) -> Optional[NutritionAnalysis]:
+        """Parse la réponse nutritionnelle de llama3.2:1b"""
+        try:
+            lines = response.strip().split('\n')
+            nutrition_data = {
+                'calories': 0,
+                'proteins': 0,
+                'carbs': 0,
+                'fats': 0,
+                'tips': ''
             }
-        }
-    
-    def _calculate_daily_needs(self, age: int, gender: str, activity_level: str) -> Dict[str, float]:
-        """Calcule les besoins nutritionnels quotidiens"""
-        
-        # Métabolisme de base approximatif
-        if gender.upper() == 'M':
-            bmr = 88.362 + (13.397 * 70) + (4.799 * 175) - (5.677 * age)  # Homme moyen
-        else:
-            bmr = 447.593 + (9.247 * 60) + (3.098 * 165) - (4.330 * age)  # Femme moyenne
-        
-        # Facteur d'activité
-        activity_factors = {
-            'sédentaire': 1.2,
-            'léger': 1.375,
-            'modéré': 1.55,
-            'intense': 1.725,
-            'très intense': 1.9
-        }
-        
-        factor = activity_factors.get(activity_level, 1.55)
-        total_calories = bmr * factor
-        
-        # Répartition des macronutriments (recommandations générales)
-        proteins_calories = total_calories * 0.15  # 15% des calories
-        carbs_calories = total_calories * 0.55     # 55% des calories
-        fats_calories = total_calories * 0.30      # 30% des calories
-        
-        return {
-            'calories': round(total_calories, 0),
-            'proteins': round(proteins_calories / 4, 1),  # 4 cal/g
-            'carbs': round(carbs_calories / 4, 1),        # 4 cal/g
-            'fats': round(fats_calories / 9, 1)           # 9 cal/g
-        }
-    
-    def suggest_ingredients_for_target(self, target_calories: float, 
-                                     current_analysis: MealAnalysis) -> List[Dict[str, Any]]:
-        """Suggère des ingrédients pour atteindre un objectif calorique"""
-        
-        remaining_calories = target_calories - current_analysis.total_calories
-        
-        if remaining_calories <= 0:
-            return []
-        
-        suggestions = []
-        
-        # Catégories d'ingrédients avec leurs caractéristiques
-        categories = {
-            'Protéines': {'max_calories': 300, 'type': 'proteins'},
-            'Légumes': {'max_calories': 100, 'type': 'vegetables'},
-            'Féculents': {'max_calories': 400, 'type': 'carbs'},
-            'Fruits': {'max_calories': 150, 'type': 'fruits'}
-        }
-        
-        for category, info in categories.items():
-            if remaining_calories <= 0:
-                break
-                
-            # Trouver des ingrédients de cette catégorie
-            ingredients = self.data_manager.get_ingredients_by_category(category)
             
-            for ingredient in ingredients[:3]:  # Limiter à 3 suggestions par catégorie
-                if remaining_calories <= 0:
-                    break
-                    
-                # Calculer la quantité suggérée
-                max_portion_calories = min(info['max_calories'], remaining_calories)
-                suggested_grams = (max_portion_calories / ingredient.calories_per_100g) * 100
+            for line in lines:
+                line = line.strip()
+                line_upper = line.upper()
                 
-                if suggested_grams > 0:
-                    suggestions.append({
-                        'name': ingredient.name,
-                        'quantity': round(suggested_grams, 0),
-                        'unit': 'g',
-                        'calories': round(max_portion_calories, 0),
-                        'category': category
-                    })
-                    
-                    remaining_calories -= max_portion_calories
-        
-        return suggestions[:10]  # Limiter à 10 suggestions
+                if 'CALORIES_TOTALES:' in line_upper or 'CALORIES:' in line_upper:
+                    calories_match = re.search(r'(\d+(?:\.\d+)?)', line)
+                    if calories_match:
+                        nutrition_data['calories'] = float(calories_match.group(1))
+                        
+                elif 'PROTEINES:' in line_upper or 'PROTÉINES:' in line_upper:
+                    proteins_match = re.search(r'(\d+(?:\.\d+)?)', line)
+                    if proteins_match:
+                        nutrition_data['proteins'] = float(proteins_match.group(1))
+                        
+                elif 'GLUCIDES:' in line_upper:
+                    carbs_match = re.search(r'(\d+(?:\.\d+)?)', line)
+                    if carbs_match:
+                        nutrition_data['carbs'] = float(carbs_match.group(1))
+                        
+                elif 'LIPIDES:' in line_upper:
+                    fats_match = re.search(r'(\d+(?:\.\d+)?)', line)
+                    if fats_match:
+                        nutrition_data['fats'] = float(fats_match.group(1))
+                        
+                elif 'CONSEILS_NUTRITION:' in line_upper:
+                    nutrition_data['tips'] = line.split(':', 1)[1].strip()
+            
+            # Validation des données
+            if nutrition_data['calories'] > 0:
+                return NutritionAnalysis(
+                    total_calories=nutrition_data['calories'],
+                    total_proteins=nutrition_data['proteins'],
+                    total_carbs=nutrition_data['carbs'],
+                    total_fats=nutrition_data['fats'],
+                    health_tips=nutrition_data['tips']
+                )
+            
+            return None
+            
+        except Exception as e:
+            print(f"Erreur parsing nutrition: {e}")
+            return None
     
-    def export_analysis_to_dict(self, analysis: MealAnalysis) -> Dict[str, Any]:
-        """Exporte l'analyse en dictionnaire pour affichage"""
-        return {
-            'summary': {
-                'total_calories': analysis.total_calories,
-                'total_proteins': analysis.total_proteins,
-                'total_carbs': analysis.total_carbs,
-                'total_fats': analysis.total_fats,
-                'total_fiber': analysis.total_fiber,
-                'macros_percentage': analysis.get_macros_percentage()
-            },
-            'ingredients': [
-                {
-                    'name': calc.ingredient_name,
-                    'quantity': calc.quantity,
-                    'unit': calc.unit,
-                    'calories_per_100g': calc.calories_per_100g,
-                    'total_calories': calc.total_calories,
-                    'proteins': calc.proteins,
-                    'carbs': calc.carbs,
-                    'fats': calc.fats,
-                    'fiber': calc.fiber
-                }
-                for calc in analysis.calculations
-            ]
-        }
+    def _calculate_basic_nutrition(self, recipe: Recipe) -> NutritionAnalysis:
+        """Calcul nutritionnel de base à partir de la base de données"""
+        total_calories = 0
+        total_proteins = 0
+        total_carbs = 0
+        total_fats = 0
+        
+        for ingredient_info in recipe.ingredients:
+            ingredient = self.data_manager.get_ingredient(ingredient_info['name'])
+            if ingredient:
+                quantity_g = self._convert_to_grams(
+                    ingredient_info['quantity'], 
+                    ingredient_info['unit']
+                )
+                factor = quantity_g / 100.0
+                
+                total_calories += ingredient.calories_per_100g * factor
+                total_proteins += ingredient.proteins * factor
+                total_carbs += ingredient.carbs * factor
+                total_fats += ingredient.fats * factor
+        
+        return NutritionAnalysis(
+            total_calories=total_calories,
+            total_proteins=total_proteins,
+            total_carbs=total_carbs,
+            total_fats=total_fats,
+            health_tips="Calcul basé sur la base de données nutritionnelles"
+        )
