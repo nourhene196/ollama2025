@@ -1,4 +1,7 @@
 # 🍽️ Assistant Culinaire & Calories IA
+![image](https://github.com/user-attachments/assets/31df8e83-47af-43ab-b9b2-39f614b6a3b2)
+![image](https://github.com/user-attachments/assets/97a11e72-3cc0-4ad4-9a33-a7f7d6563347)
+
 
 [![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/downloads/)
 [![Ollama](https://img.shields.io/badge/Ollama-Required-green.svg)](https://ollama.ai/)
