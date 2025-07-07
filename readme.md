@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/downloads/)
 [![Ollama](https://img.shields.io/badge/Ollama-Required-green.svg)](https://ollama.ai/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-3.0.0-red.svg)](https://github.com/username/assistant-culinaire-ia)
+[![Version](https://img.shields.io/badge/Version-3.0.0-red.svg)]((https://github.com/nourhene196/ollama2025))
 
 > **Application moderne de génération de recettes et calcul de calories utilisant l'IA llama3.2:1b via Ollama**
 
@@ -315,7 +315,7 @@ Ce projet est sous licence MIT. Voir le fichier [LICENSE](LICENSE) pour plus de 
 
 ## 📞 Support
 
-- **Issues GitHub** : [Signaler un problème](https://github.com/username/assistant-culinaire-ia/issues)
+- **Issues GitHub** : [Signaler un problème][(https://github.com/nourhene196/ollama2025))
 - **Documentation** : Ce README et commentaires dans le code
 - **Ollama Support** : [ollama.ai](https://ollama.ai/)
 
