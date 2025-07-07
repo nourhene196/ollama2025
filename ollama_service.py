@@ -15,7 +15,7 @@ class OllamaService:
         self.config = config
         self.base_url = config.OLLAMA_BASE_URL
         self.model = config.OLLAMA_MODEL
-        self.timeout = 120  # Plus de temps pour le modèle compact
+        self.timeout = 30  # Plus de temps pour le modèle compact
         
     def is_available(self) -> bool:
         """Vérifie si Ollama est disponible"""

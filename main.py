@@ -334,8 +334,8 @@ class RecipeTab:
                 self.parent.after(0, lambda: self.on_recipe_generated(recipe, loading))
                 
             except Exception as e:
-                self.parent.after(0, lambda: self.on_generation_error(str(e), loading))
-        
+                error_msg = str(e)
+                self.parent.after(0, lambda msg=error_msg, l=loading: self.on_generation_error(msg, l))
         thread = threading.Thread(target=generate_thread, daemon=True)
         thread.start()
     

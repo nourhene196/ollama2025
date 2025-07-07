@@ -44,6 +44,7 @@ Interface Moderne
 
 ```bash
 git clone https://github.com/username/assistant-culinaire-ia.git
+git clone https://github.com/nourhene196/assistant-culinaire-ia.git
 cd assistant-culinaire-ia
 ```
 
